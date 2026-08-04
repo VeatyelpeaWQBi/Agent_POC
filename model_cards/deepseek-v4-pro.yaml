@@ -1,0 +1,22 @@
+# 模型卡片：声明一个模型的能力与约束，驱动配置校验和模型构造。
+# 完整卡片格式参见 AgentScope 文档"模型概述 - 前端集成"：
+# https://docs.agentscope.io/versions/2.0.6dev/zh/building-blocks/model/overview
+
+name: deepseek-v4-pro
+label: DeepSeek V4 Pro
+status: active
+
+input_types:
+  - text/plain
+  - application/x-thinking
+
+output_types:
+  - text/plain
+  - application/x-thinking
+
+context_size: 1000000
+output_size: 384000
+
+parameter_overrides:
+  max_tokens:
+    maximum: 384000

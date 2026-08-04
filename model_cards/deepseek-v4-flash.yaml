@@ -1,0 +1,25 @@
+# 模型卡片：声明一个模型的能力与约束，驱动配置校验和模型构造。
+# 完整卡片格式参见 AgentScope 文档"模型概述 - 前端集成"：
+# https://docs.agentscope.io/versions/2.0.6dev/zh/building-blocks/model/overview
+
+name: deepseek-v4-flash
+label: DeepSeek V4 Flash
+status: active
+
+# 接受的输入 / 可输出的内容类型，使用 MIME 类型描述模态。
+input_types:
+  - text/plain
+  - application/x-thinking
+
+output_types:
+  - text/plain
+  - application/x-thinking
+
+# 上限：上下文窗口与最大输出 token 数。
+context_size: 1000000
+output_size: 384000
+
+# 逐模型参数覆盖：叠加在模型 Parameters 类的基础 schema 之上。
+parameter_overrides:
+  max_tokens:
+    maximum: 384000
