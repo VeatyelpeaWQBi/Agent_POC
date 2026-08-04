@@ -69,6 +69,7 @@ class AppConfig:
     model_card: ModelCard
     max_tokens: int | None = field(default=None)
     thinking: bool = field(default=False)
+    timezone: str = field(default="Asia/Shanghai")
 
 
 def _required_env(name: str) -> str:
@@ -225,4 +226,9 @@ def load_config() -> AppConfig:
         model_card=model_card,
         max_tokens=max_tokens,
         thinking=thinking,
+        # 注入给模型的时区（IANA 格式），用于运行时状态注入。
+        timezone=(
+            os.getenv("AGENT_TIMEZONE", "Asia/Shanghai").strip()
+            or "Asia/Shanghai"
+        ),
     )

@@ -174,6 +174,7 @@ AgentScope 的 `Write` 和 `Edit` 还内置了敏感文件保护，例如 `.env`
 | `DEEPSEEK_THINKING` | 否 | `false` | 思考模式；仅卡片声明 `application/x-thinking` 的模型可开启 |
 | `AGENT_NAME` | 否 | `虾虾子` | Agent 显示名称 |
 | `AGENT_SYSTEM_PROMPT` | 否 | `config.py` 中的默认人格 | 身份和行为设定 |
+| `AGENT_TIMEZONE` | 否 | `Asia/Shanghai` | 注入给模型的时区（IANA 格式），运行时状态每 1 分钟刷新 |
 | `AGENT_WORKSPACE` | 否 | 启动程序时的当前目录 | 工具默认工作目录 |
 
 本示例会在程序运行期间保留多轮对话上下文；退出后不会持久化聊天记录。

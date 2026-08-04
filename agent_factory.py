@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from agentscope.agent import Agent
+from agentscope.agent import Agent, InjectionConfig
 from agentscope.credential import DeepSeekCredential
 from agentscope.model import DeepSeekChatModel
 from agentscope.permission import (
@@ -21,6 +21,11 @@ from config import AppConfig
 
 READ_ONLY_TOOLS = ("Read", "Glob", "Grep")
 SENSITIVE_TOOLS = ("PowerShell", "Write", "Edit")
+
+# 运行时状态注入的时间刷新间隔。InjectionConfig.time_interval 的单位是
+# 小时：1/60 小时 = 1 分钟，即距上次注入超过 1 分钟就重新注入一次
+# 当前时间与时区，让模型始终知道"现在几点"。
+TIME_INJECTION_INTERVAL_HOURS = 1 / 60
 
 
 def _rule(tool_name: str, behavior: PermissionBehavior) -> PermissionRule:
@@ -106,10 +111,19 @@ def build_agent(config: AppConfig) -> Agent:
         permission_context=build_permission_context(config),
     )
 
+    # 运行时状态注入：把当前时间与时区注入上下文，让模型感知"现在几点"。
+    # inject_runtime_state 默认开启；time_interval=1/60 小时 = 每 1 分钟刷新。
+    # 注意：注入不是临时的，会随刷新次数累积到上下文中。
+    injection_config = InjectionConfig(
+        timezone=config.timezone,
+        time_interval=TIME_INJECTION_INTERVAL_HOURS,
+    )
+
     return Agent(
         name=config.agent_name,
         system_prompt=config.system_prompt,
         model=model,
         toolkit=toolkit,
         state=state,
+        injection_config=injection_config,
     )
