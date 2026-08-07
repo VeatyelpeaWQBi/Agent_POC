@@ -10,10 +10,12 @@
     ↓
 模型决定直接回答，或者调用工具
     ↓
+多步任务：模型先调用 TaskCreate 创建任务列表（自动执行，无需确认）
+    ↓
 只读工具（Read / Glob / Grep）────────→ 自动执行
 敏感工具（PowerShell / Write / Edit）─→ 终端显示参数，等待 y/n 审核
     ↓
-工具结果交还给模型
+工具结果交还给模型，模型用 TaskUpdate 更新任务进度并继续
     ↓
 模型可以继续调用工具，或生成最终回答
 ```
@@ -28,7 +30,8 @@ Agent_POC/
 ├─ main.py            # 程序入口和聊天循环
 ├─ config.py          # 读取 .env、加载模型卡片并校验配置
 ├─ agent_factory.py   # 创建模型、工具箱和权限规则
-├─ approval.py        # 敏感工具审核及暂停/恢复循环
+├─ approval.py        # 敏感工具审核、暂停/恢复循环、任务 nag 提醒
+├─ task_broadcaster.py # 任务状态广播：渲染器 + 渠道抽象 + 终端面板
 ├─ model_cards/       # 模型卡片注册表（YAML 声明模型能力与上限）
 ├─ .env               # 本地真实配置，不会提交到 Git
 ├─ .env.example       # 可以公开的配置模板
@@ -163,6 +166,51 @@ SENSITIVE_TOOLS = ("PowerShell", "Write", "Edit")
 AgentScope 的 `Write` 和 `Edit` 还内置了敏感文件保护，例如 `.env`、`.git`
 和 SSH 配置等路径会受到额外检查。
 
+## 6. 待办管理（任务追踪）
+
+使用 AgentScope 2.0 内置的任务四件套（已在 `agent_factory.py` 注册）：
+
+- **`TaskCreate`**：创建任务（`subject` + `description`），状态默认 `pending`。
+- **`TaskList`** / **`TaskGet`**：查看任务列表 / 单个任务。
+- **`TaskUpdate`**：更新任务状态（`pending` → `in_progress` → `completed`，
+  或 `deleted`），也可设置 `blocks` / `blocked_by` 依赖、`owner` 等。
+
+这些工具只更新内存中的任务列表（`AgentState.tasks_context`），不触碰文件
+系统，因此 `check_permissions` 恒为 ALLOW，不弹人工确认、无需额外权限规则。
+
+**Nag reminder**（`approval.py`）：模仿 [AI Agent Learning L03（待办管理）](
+https://www.kangxin.cfd/ai-agent-learning/zh/L03/) 的催促机制——模型在单轮
+回复里连续 3 轮推理都没有调用任何任务工具、且仍有未完成任务时，程序会向
+上下文注入 `<reminder>Update your todos.</reminder>` 催促它维护进度。
+AgentScope 自身的运行时状态注入会在模型“从未用过任务工具”时提示一次
+`Use TaskList to view them`，两者互补：一个是提醒它开始用，一个是盯住它
+别忘更新。
+
+任务列表保存在内存中，会话结束即清空。
+
+**实时任务面板**（`task_broadcaster.py`）：模型每调用一次任务工具
+（TaskCreate / TaskUpdate 等）执行完成后，`approval.py` 会把当前任务状态
+渲染成快照广播出去。当前订阅了终端渠道，面板在**固定位置原地刷新**
+（ANSI 转义，Windows 10+ 终端原生支持），不会重复堆积：
+
+```text
+── 任务面板 ──────────────────────
+[ ] #1: 整理虾虾子的待办清单
+[ ] #2: 给主人泡一杯茶
+[ ] #3: 验证任务状态流转
+
+(0/3 completed)
+──────────────────────────────────
+```
+
+任务完成后（或出现人工审核卡片、模型回复等其他输出时），面板会先
+"定稿"（`finalize`），其他输出接在面板下方；下一轮任务更新再开新面板。
+输出被重定向到文件/管道时自动退化为逐块打印，不写 ANSI 序列。
+
+**扩展渠道**：展示层与状态追踪解耦——`TaskBroadcaster` 只管把快照推给
+所有 `TaskChannel` 订阅者。以后要接 Web UI、远程消息通知，只需新增一个
+`TaskChannel` 子类并在 `main.py` 里 `subscribe`，无需改动广播与触发逻辑。
+
 ## 配置项
 
 | 环境变量 | 必填 | 默认值 | 用途 |
@@ -172,6 +220,7 @@ AgentScope 的 `Write` 和 `Edit` 还内置了敏感文件保护，例如 `.env`
 | `DEEPSEEK_MODEL` | 否 | `deepseek-v4-flash` | 模型名称，必须存在于 `model_cards/` 的卡片中 |
 | `DEEPSEEK_MAX_TOKENS` | 否 | 无 | 最大输出 token 数，不得超过卡片 `output_size` |
 | `DEEPSEEK_THINKING` | 否 | `false` | 思考模式；仅卡片声明 `application/x-thinking` 的模型可开启 |
+| `AGENT_MAX_ITERS` | 否 | `60` | 一轮回复内 ReAct 循环最大迭代数；大型多步骤任务建议 ≥ 60 |
 | `AGENT_NAME` | 否 | `虾虾子` | Agent 显示名称 |
 | `AGENT_SYSTEM_PROMPT` | 否 | `config.py` 中的默认人格 | 身份和行为设定 |
 | `AGENT_TIMEZONE` | 否 | `Asia/Shanghai` | 注入给模型的时区（IANA 格式），运行时状态每 1 分钟刷新 |

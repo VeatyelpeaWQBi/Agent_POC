@@ -1,4 +1,11 @@
-"""处理工具审核，以及 AgentScope 的“思考—工具—结果”循环。"""
+"""处理工具审核，以及 AgentScope 的“思考—工具—结果”循环。
+
+除了敏感工具审核，这里还实现了 L03 风格的 nag reminder（催促提醒）：
+模型在单轮回复里连续 ``NAG_ROUNDS`` 轮推理都没有调用任何任务工具
+（TaskCreate / TaskGet / TaskList / TaskUpdate）、且当前还有未完成任务时，
+程序会向 AgentScope 上下文注入一条
+``<reminder>Update your todos.</reminder>``，下一轮推理的模型就能看到。
+"""
 
 from __future__ import annotations
 
@@ -9,14 +16,34 @@ from typing import Any
 from agentscope.agent import Agent
 from agentscope.event import (
     ConfirmResult,
+    ModelCallEndEvent,
     RequireUserConfirmEvent,
+    ToolCallStartEvent,
+    ToolResultStartEvent,
     UserConfirmResultEvent,
 )
-from agentscope.message import Msg, ToolCallBlock, UserMsg
+from agentscope.message import HintBlock, Msg, ToolCallBlock, UserMsg
+
+from task_broadcaster import TaskBroadcaster
 
 
 APPROVE_WORDS = {"y", "yes", "是", "同意", "允许", "批准"}
 DENY_WORDS = {"n", "no", "否", "拒绝", "不允许", "取消"}
+
+# AgentScope 内置任务工具的四个名字，与 InjectionConfig.task_tool_names 默认值一致。
+TASK_TOOL_NAMES = ("TaskCreate", "TaskGet", "TaskList", "TaskUpdate")
+
+# L03 页面：模型连续 3 轮推理没有更新任务列表就注入催促提醒。
+NAG_ROUNDS = 3
+NAG_REMINDER = "<reminder>Update your todos.</reminder>"
+
+
+def _has_uncompleted_tasks(agent: Agent) -> bool:
+    """AgentScope 的 AgentState 里是否存在未完成任务。"""
+    return any(
+        getattr(task, "state", None) in ("pending", "in_progress")
+        for task in agent.state.tasks_context.tasks
+    )
 
 
 def _pretty_tool_input(raw_input: str) -> str:
@@ -86,7 +113,11 @@ async def _build_confirm_event(
     )
 
 
-async def run_agent_turn(agent: Agent, user_text: str) -> Msg:
+async def run_agent_turn(
+    agent: Agent,
+    user_text: str,
+    task_broadcaster: TaskBroadcaster | None = None,
+) -> Msg:
     """执行完整的一轮对话，包括可能出现的多次工具调用。
 
     循环过程：
@@ -94,13 +125,26 @@ async def run_agent_turn(agent: Agent, user_text: str) -> Msg:
 
     AgentScope 在需要确认时会暂停回复。程序提交 UserConfirmResultEvent 后，
     同一个回复会从暂停的位置继续，直到得到最终 Msg。
+
+    同时这里实现了 L03 风格的 nag reminder：跟踪模型每轮推理是否更新了
+    任务列表，连续 NAG_ROUNDS 轮没有更新时向上下文注入催促提醒。
+
+    若传入 ``task_broadcaster``，每次任务工具（TaskCreate/TaskGet/
+    TaskList/TaskUpdate）执行完成后，会把当前任务状态渲染成快照广播给
+    所有订阅渠道（终端 / 未来的 Web UI、远程通知等）。
     """
+
+    # 每轮开始时让任务面板定稿，避免上一轮的残留在原地刷新时被错误覆盖。
+    if task_broadcaster is not None:
+        task_broadcaster.finalize()
 
     next_input: Any = UserMsg(name="user", content=user_text)
 
     while True:
         confirm_event: RequireUserConfirmEvent | None = None
         final_message: Msg | None = None
+        rounds_since_todo = 0
+        todo_used_this_round = False
 
         async for event_or_message in agent.reply_stream(
             next_input,
@@ -108,14 +152,54 @@ async def run_agent_turn(agent: Agent, user_text: str) -> Msg:
         ):
             if isinstance(event_or_message, RequireUserConfirmEvent):
                 confirm_event = event_or_message
+
+            elif isinstance(event_or_message, ToolCallStartEvent):
+                # 模型每轮推理后发起的工具调用；记下本轮是否更新了任务。
+                if event_or_message.tool_call_name in TASK_TOOL_NAMES:
+                    todo_used_this_round = True
+
+            elif (
+                isinstance(event_or_message, ToolResultStartEvent)
+                and event_or_message.tool_call_name in TASK_TOOL_NAMES
+                and task_broadcaster is not None
+            ):
+                # 任务工具已执行完成（此时 AgentState.tasks_context
+                # 已更新），把状态快照广播给所有订阅渠道。
+                await task_broadcaster.broadcast(agent.state.tasks_context)
+
+            elif isinstance(event_or_message, ModelCallEndEvent):
+                # 一轮推理结束：检查是否连续多轮没有更新任务列表。
+                rounds_since_todo = (
+                    0 if todo_used_this_round else rounds_since_todo + 1
+                )
+                todo_used_this_round = False
+                if (
+                    rounds_since_todo >= NAG_ROUNDS
+                    and _has_uncompleted_tasks(agent)
+                ):
+                    # 注入催促提醒（与 AgentScope 内部运行时状态注入
+                    # 同机制），下一轮推理的模型就能看到。
+                    agent.state.append_context(
+                        agent.name,
+                        [HintBlock(hint=NAG_REMINDER)],
+                    )
+                    rounds_since_todo = 0
+
             elif isinstance(event_or_message, Msg):
                 final_message = event_or_message
 
         if confirm_event is not None:
+            # 人工审核卡片即将打印到终端：先让任务面板定稿，
+            # 避免后续原地刷新覆盖审核提示。
+            if task_broadcaster is not None:
+                task_broadcaster.finalize()
             next_input = await _build_confirm_event(confirm_event)
             continue
 
         if final_message is None:
             raise RuntimeError("Agent 没有返回最终消息。")
 
+        # 模型最终回复即将由 main.py 打印：让任务面板定稿。
+        if task_broadcaster is not None:
+            task_broadcaster.finalize()
         return final_message

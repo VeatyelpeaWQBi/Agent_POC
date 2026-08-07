@@ -8,6 +8,7 @@ from typing import Any
 from approval import run_agent_turn
 from agent_factory import build_agent
 from config import load_config
+from task_broadcaster import TaskBroadcaster, TerminalTaskChannel
 
 
 EXIT_COMMANDS = {"/exit", "/quit", "exit", "quit", "退出"}
@@ -33,6 +34,12 @@ async def chat_loop() -> None:
     config = load_config()
     agent = build_agent(config)
 
+    # 任务状态广播：模型每次调用任务工具后，把渲染好的任务面板推送给
+    # 所有订阅渠道。当前订阅终端；以后可再 subscribe 一个 Web UI 或
+    # 远程通知渠道，无需改动广播与触发逻辑。
+    task_broadcaster = TaskBroadcaster()
+    task_broadcaster.subscribe(TerminalTaskChannel())
+
     print(
         f"{agent.name} 已启动。输入 /exit、/quit 或“退出”结束对话。\n"
         f"工作目录：{config.workspace}\n"
@@ -55,7 +62,11 @@ async def chat_loop() -> None:
             return
 
         try:
-            reply = await run_agent_turn(agent, user_input)
+            reply = await run_agent_turn(
+                agent,
+                user_input,
+                task_broadcaster=task_broadcaster,
+            )
             answer = extract_text(reply)
             print(f"\n{agent.name}：{answer or '[模型没有返回文本内容]'}")
         except KeyboardInterrupt:

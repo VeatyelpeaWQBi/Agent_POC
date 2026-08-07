@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from agentscope.agent import Agent, InjectionConfig
+from agentscope.agent import Agent, InjectionConfig, ReActConfig
 from agentscope.credential import DeepSeekCredential
 from agentscope.model import DeepSeekChatModel
 from agentscope.permission import (
@@ -13,7 +13,19 @@ from agentscope.permission import (
     PermissionRule,
 )
 from agentscope.state import AgentState
-from agentscope.tool import Edit, Glob, Grep, PowerShell, Read, Toolkit, Write
+from agentscope.tool import (
+    Edit,
+    Glob,
+    Grep,
+    PowerShell,
+    Read,
+    TaskCreate,
+    TaskGet,
+    TaskList,
+    TaskUpdate,
+    Toolkit,
+    Write,
+)
 from pydantic import SecretStr
 
 from config import AppConfig
@@ -104,6 +116,14 @@ def build_agent(config: AppConfig) -> Agent:
             PowerShell(cwd=config.workspace),
             Write(),
             Edit(),
+            # AgentScope 内置任务四件套：模型用它规划/追踪多步任务。
+            # 它们只更新内存中的任务列表（AgentState.tasks_context），
+            # 自身 check_permissions 恒为 ALLOW，不弹人工确认；
+            # 连续不更新会被 approval.py 的 nag reminder 催促。
+            TaskCreate(),
+            TaskGet(),
+            TaskList(),
+            TaskUpdate(),
         ],
     )
 
@@ -119,6 +139,11 @@ def build_agent(config: AppConfig) -> Agent:
         time_interval=TIME_INJECTION_INTERVAL_HOURS,
     )
 
+    # 一轮回复内 ReAct 循环的最大迭代数（默认 60，可被 AGENT_MAX_ITERS 覆盖）。
+    # 大型任务（多步骤 + 逐项工具调用）容易超过 AgentScope 默认的 20，
+    # 触顶后模型只能输出"迭代次数超限"而无法完成任务。
+    react_config = ReActConfig(max_iters=config.max_iters)
+
     return Agent(
         name=config.agent_name,
         system_prompt=config.system_prompt,
@@ -126,4 +151,5 @@ def build_agent(config: AppConfig) -> Agent:
         toolkit=toolkit,
         state=state,
         injection_config=injection_config,
+        react_config=react_config,
     )

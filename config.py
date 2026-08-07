@@ -55,6 +55,12 @@ DEFAULT_MODEL_NAME = "deepseek-v4-flash"
 # 思考模式依赖模型卡片声明的能力。
 THINKING_MIME_TYPE = "application/x-thinking"
 
+# 一轮回复内 ReAct 循环的最大推理-行动迭代数（默认值）。
+# 每个“模型思考 → 工具调用 → 工具结果”算一次迭代：任务越大、工具调用
+# 越多，越容易触顶。AgentScope 默认 20 对大任务偏小，这里调大到 60，
+# 也可用 AGENT_MAX_ITERS 覆盖。
+DEFAULT_MAX_ITERS = 60
+
 
 @dataclass(frozen=True)
 class AppConfig:
@@ -70,6 +76,7 @@ class AppConfig:
     max_tokens: int | None = field(default=None)
     thinking: bool = field(default=False)
     timezone: str = field(default="Asia/Shanghai")
+    max_iters: int = field(default=DEFAULT_MAX_ITERS)
 
 
 def _required_env(name: str) -> str:
@@ -210,6 +217,22 @@ def load_config() -> AppConfig:
             "无法开启 DEEPSEEK_THINKING。",
         )
 
+    # 可选：一轮回复内 ReAct 循环的最大迭代数（每个“思考→工具→结果”算一次）。
+    # 任务越大越容易触顶：18 个待办 + 逐项工具调用会超过 AgentScope 默认的 20。
+    max_iters_raw = os.getenv("AGENT_MAX_ITERS", "").strip()
+    max_iters = DEFAULT_MAX_ITERS
+    if max_iters_raw:
+        try:
+            max_iters = int(max_iters_raw)
+        except ValueError as exc:
+            raise RuntimeError(
+                f"环境变量 AGENT_MAX_ITERS 必须是整数，当前值：{max_iters_raw!r}",
+            ) from exc
+        if max_iters <= 0:
+            raise RuntimeError(
+                f"AGENT_MAX_ITERS 必须大于 0，当前值：{max_iters}",
+            )
+
     return AppConfig(
         api_key=_required_env("DEEPSEEK_API_KEY"),
         base_url=os.getenv(
@@ -231,4 +254,5 @@ def load_config() -> AppConfig:
             os.getenv("AGENT_TIMEZONE", "Asia/Shanghai").strip()
             or "Asia/Shanghai"
         ),
+        max_iters=max_iters,
     )
