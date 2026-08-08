@@ -31,6 +31,12 @@ from agentscope.app.storage import (
 )
 from agentscope.app.workspace_manager import LocalWorkspaceManager
 from agentscope.credential import DeepSeekCredential
+from agentscope.permission import (
+    AdditionalWorkingDirectory,
+    PermissionContext,
+    PermissionMode,
+)
+from agentscope.state import AgentState
 from pydantic import SecretStr
 
 from config import AppConfig
@@ -86,6 +92,9 @@ def build_app(
         ``(app, storage)`` —— app 供 uvicorn 启动；storage 归 FastAPI
         lifespan 管理，调用方**不要**手动进入/退出它的生命周期。
     """
+    from fastapi.middleware import Middleware
+    from fastapi.middleware.cors import CORSMiddleware
+
     storage = build_storage(config)
     app = create_app(
         storage=storage,
@@ -94,9 +103,37 @@ def build_app(
             str(config.workspace / ".workspaces"),
         ),
         custom_subagent_templates=custom_subagent_templates or [],
+        # Web UI 前端与后端可能不同源（如 dev 端口 5173 / 填写的地址），
+        # 官方 create_app 不内置 CORS，这里放开跨域供前端探测与调用。
+        extra_middlewares=[
+            Middleware(
+                CORSMiddleware,
+                allow_origins=["*"],
+                allow_methods=["*"],
+                allow_headers=["*"],
+            ),
+        ],
     )
+    _mount_health(app)
     _mount_web_ui(app, config)
     return app, storage
+
+
+def _mount_health(app: "FastAPI") -> None:
+    """提供 GET /health——官方 Web UI 设置页的服务器探测端点。
+
+    官方前端 healthApi.check 探测 `GET /health`，要求 200 + JSON
+    `{status, version, components}` 才认为地址正确；本版本 create_app
+    没有内置 /health，这里补上（后端确已就绪即返回 ok）。
+    """
+
+    @app.get("/health", include_in_schema=False)
+    async def health() -> dict:
+        return {
+            "status": "ok",
+            "version": "2.0.6dev",
+            "components": {"storage": "ok", "message_bus": "ok"},
+        }
 
 
 def _mount_web_ui(app: "FastAPI", config: AppConfig) -> None:
@@ -191,6 +228,22 @@ async def provision(config: AppConfig, storage: AsyncSQLAlchemyStorage) -> None:
     )
 
     # 3. 默认会话（绑定模型配置，Web UI 打开即可对话）
+    #    YOLO 模式：会话权限切到 ACCEPT_EDITS，项目根目录（config.workspace）
+    #    内文件读写（Write/Edit）自动放行；命令行（PowerShell）与
+    #    工作区外敏感操作仍走审核。
+    session_state: "AgentState | None" = None
+    if config.yolo:
+        session_state = AgentState(
+            permission_context=PermissionContext(
+                mode=PermissionMode.ACCEPT_EDITS,
+                working_directories={
+                    str(config.workspace): AdditionalWorkingDirectory(
+                        path=str(config.workspace),
+                        source="yolo",
+                    ),
+                },
+            ),
+        )
     await storage.upsert_session(
         USER_ID,
         AGENT_ID,
@@ -199,6 +252,7 @@ async def provision(config: AppConfig, storage: AsyncSQLAlchemyStorage) -> None:
             name="默认会话",
             chat_model_config=_chat_model_config(config),
         ),
+        state=session_state,
         session_id=DEFAULT_SESSION_ID,
         source=SessionSource.USER,
     )

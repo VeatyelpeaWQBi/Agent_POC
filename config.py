@@ -42,7 +42,9 @@ DEFAULT_SYSTEM_PROMPT = """
 工具规则：
 - 需要查看项目文件或执行任务时，可以主动调用工具。
 - 优先使用 Read、Glob、Grep 等只读工具了解情况。
-- PowerShell、Write、Edit 会由程序提交给主人审核；没有获得批准时不得绕过审核。
+- 创建或修改文件请使用 Write 或 Edit 工具；不要用命令行工具做文件操作。
+- 命令行工具（PowerShell）的每次执行都会触发人工确认，即使 YOLO 模式也不会自动放行；能用 Write/Edit/Read 完成的，就不要用命令行。
+- 需要主人批准的操作会由程序拦截；没有获得批准时不得绕过审核。
 - 工具被拒绝后，向主人说明影响，并尝试提供不执行敏感操作的替代方案。
 """.strip()
 
@@ -77,6 +79,7 @@ class AppConfig:
     thinking: bool = field(default=False)
     timezone: str = field(default="Asia/Shanghai")
     max_iters: int = field(default=DEFAULT_MAX_ITERS)
+    yolo: bool = field(default=False)
 
 
 def _required_env(name: str) -> str:
@@ -233,6 +236,10 @@ def load_config() -> AppConfig:
                 f"AGENT_MAX_ITERS 必须大于 0，当前值：{max_iters}",
             )
 
+    # 可选：YOLO 模式——工作区（项目根目录）内的文件读写（Write/Edit）
+    # 自动放行；命令行（PowerShell）与工作区外敏感操作仍走审核。
+    yolo = _env_bool("AGENT_YOLO", False)
+
     return AppConfig(
         api_key=_required_env("DEEPSEEK_API_KEY"),
         base_url=os.getenv(
@@ -255,4 +262,5 @@ def load_config() -> AppConfig:
             or "Asia/Shanghai"
         ),
         max_iters=max_iters,
+        yolo=yolo,
     )

@@ -191,10 +191,36 @@ worker 的派生/汇报由 AgentScope 原生机制调度：父 agent 的 `AgentC
   api_key），已被 `.gitignore` 忽略，**禁止入库**。
 - 凭证（DeepSeek api_key）通过 `service_factory.provision` 写入存储，
   代码内不打印密钥。
-- 虾虾子（leader）调用写工具（`Bash / PowerShell / Write / Edit`）时会
-  触发确认事件——服务形态的**异步确认机制**：主人通过 `POST /chat/`
-  把 `UserConfirmResult` 作为 `input` 回传即可完成确认（官方设计，无
+- 虾虾子（leader）调用写工具（`PowerShell / Write / Edit`，Windows
+  本地工作区的 shell 工具为 PowerShell）时会触发确认事件
+  ——服务形态的**异步确认机制**：主人通过 `POST /chat/` 把
+  `UserConfirmResult` 作为 `input` 回传即可完成确认（官方设计，无
   人工界面时不会自动放行）。worker 则直接 deny，绝不等确认。
+
+### YOLO 模式（`AGENT_YOLO=true`）
+
+在 `.env` 里设置 `AGENT_YOLO=true` 后，虾虾子的默认会话以
+`ACCEPT_EDITS` 权限模式启动（= YOLO）。也可以在 Web UI 上随时切换：
+chat 页顶部的权限模式下拉框选 **"Accept Edits"**（官方原生
+`PATCH /sessions/{id}` 的 `permission_mode` 字段，点一下即生效，
+无需改代码/重新构建）。
+
+YOLO 下的行为边界：
+
+- **自动放行**：项目根目录（`config.workspace`）内的文件读写
+  （`Write` / `Edit`）不再逐次确认，直接执行；
+- **仍确认**：`PowerShell` 命令（Windows 本地工作区的 shell 工具）
+  每次执行都触发人工确认——这是官方安全设计（不区分命令自动放行）。
+  系统提示已引导虾虾子优先用 `Write`/`Edit` 做文件操作；
+- **工作区外**：写入/操作项目根目录之外的路径依旧触发确认；
+- `.env`、`.git` 等危险路径即使在项目内也受 AgentScope 内置保护。
+
+```dotenv
+AGENT_YOLO=true
+```
+
+改动重启生效（`provision` 幂等，会更新默认会话的权限上下文）。不设置或
+设为 `false` 时保持默认：所有写操作都需确认。
 
 ## 配置项
 
@@ -206,6 +232,7 @@ worker 的派生/汇报由 AgentScope 原生机制调度：父 agent 的 `AgentC
 | `DEEPSEEK_MAX_TOKENS` | 否 | 无 | 最大输出 token 数，不得超过卡片 `output_size` |
 | `DEEPSEEK_THINKING` | 否 | `false` | 思考模式；仅卡片声明 `application/x-thinking` 的模型可开启 |
 | `AGENT_MAX_ITERS` | 否 | `60` | 一轮回复内 ReAct 循环最大迭代数；大型多步骤任务建议 ≥ 60 |
+| `AGENT_YOLO` | 否 | `false` | YOLO 模式：工作区（项目根目录）内的文件读写（Write/Edit）自动放行，不再逐次确认；命令行（PowerShell）与工作区外的敏感操作仍走审核 |
 | `AGENT_NAME` | 否 | `虾虾子` | Agent 显示名称 |
 | `AGENT_SYSTEM_PROMPT` | 否 | `config.py` 中的默认人格 | 身份和行为设定 |
 | `AGENT_TIMEZONE` | 否 | `Asia/Shanghai` | 注入给模型的时区（IANA 格式） |
