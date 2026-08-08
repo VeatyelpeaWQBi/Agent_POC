@@ -31,6 +31,7 @@ Agent_POC/
 ├─ config.py            # 读取 .env、加载模型卡片并校验配置
 ├─ service_factory.py   # create_app 装配 + 虾虾子/凭证/会话预置
 ├─ subagent_templates.py # 原生子代理模板（只读 worker）
+├─ web_ui/             # 官方 Web UI 前端工程（React+Vite，构建后挂载到 /）
 ├─ model_cards/         # 模型卡片注册表（YAML 声明模型能力与上限）
 ├─ .env                 # 本地真实配置，不会提交到 Git
 ├─ .env.example         # 可以公开的配置模板
@@ -108,9 +109,34 @@ python main.py
 
 启动后：
 
+- Web UI（官方聊天前端）：http://127.0.0.1:8000/
 - API 文档（Swagger UI）：http://127.0.0.1:8000/docs
 - 启动时自动预置 DeepSeek 凭证 + 虾虾子 agent + 默认会话（幂等），
   无需手工建 agent——服务端口的虾虾子与配置完全来自同一份 `config.py`。
+
+### 构建 Web UI（首次启动前执行一次）
+
+Web UI 是 AgentScope 官方前端工程（`web_ui/`，React + Vite）。首次使用
+需要构建（生成 `dist/` 后服务自动挂载到根路径；未构建时服务仍以纯 API
+可用）：
+
+```powershell
+# 需要 Node.js 20.19+（vite 8 要求；官网安装 https://nodejs.org/ 推荐 22 LTS）
+cd web_ui/frontend
+npm install
+npm run build
+```
+
+> 官方工程是 pnpm monorepo（frontend + backend），backend 是官方开发用
+> 的占位服务，本项目不需要；只用 frontend 时 npm 与 pnpm 均可构建。
+
+构建产物在 `web_ui/frontend/dist/`（已 gitignore，不入库）。启动后在
+浏览器打开 http://127.0.0.1:8000/ ，首次进入会要求设置服务器地址
+（填 `http://127.0.0.1:8000`）和用户名——页面右上角设置完成即可聊天。
+
+已知限制：前端页面路由（如 `/schedule`、`/credential`）与后端 API 端点
+同名，浏览器直接刷新这些地址会命中 API 返回 JSON。请从首页 `/` 进入，
+用页面内导航即可。
 
 ## 4. 与虾虾子对话（REST）
 

@@ -3,11 +3,13 @@
 本模块负责把 ``agentscope.app`` 服务层装配起来，并预置"这一个 AI
 AGENT"（虾虾子）到服务中——agent 配置（人格 / 模型 / 凭证）来自
 ``config.py``，主程序与预置共享同一份。
+
 对外提供：
 
 - :func:`build_storage`：创建服务后端 storage（路径基于 config.workspace）。
 - :func:`build_app`：构造官方 ``create_app`` 的 FastAPI app 与底层
-  storage，支持子代理模板注入。
+  storage，支持子代理模板注入；若 ``web_ui/frontend/dist`` 存在则把
+  官方 Web UI 挂到根路径（SPA）。
 - :func:`provision`：预置 DeepSeek 凭证 + 虾虾子 agent + 默认会话
   （幂等，可重复调用）。
 """
@@ -42,6 +44,18 @@ DEFAULT_SESSION_ID = "session-xiashazi"
 # DeepSeek 凭证 id（与 ChatModelConfig.credential_id 对应）。
 CREDENTIAL_ID = "deepseek-cred"
 USER_ID = "local-user"
+
+# 官方 Web UI 的前端路由前缀（SPA fallback 白名单）。
+_SPA_PREFIXES = (
+    "chat",
+    "schedule",
+    "channel",
+    "credential",
+    "mcp",
+    "skill",
+    "knowledge",
+    "setup",
+)
 
 
 def build_storage(config: AppConfig) -> AsyncSQLAlchemyStorage:
@@ -81,7 +95,54 @@ def build_app(
         ),
         custom_subagent_templates=custom_subagent_templates or [],
     )
+    _mount_web_ui(app, config)
     return app, storage
+
+
+def _mount_web_ui(app: "FastAPI", config: AppConfig) -> None:
+    """把官方 Web UI 构建产物（web_ui/frontend/dist）挂到根路径。
+
+    - ``/assets/*``：静态资源（Vite 产物）；
+    - 其余 GET：SPA fallback —— 前端路由（/chat、/setup 等）返回
+      index.html，未知路径返回 404（保护 API 文档与未匹配路由）。
+
+    若尚未构建前端（dist 不存在），静默跳过，服务仍以纯 API 可用；
+    README 的"构建 Web UI"一节说明如何生成 dist。
+    """
+    from fastapi.responses import FileResponse
+    from fastapi.staticfiles import StaticFiles
+
+    dist_dir = config.workspace / "web_ui" / "frontend" / "dist"
+    index_html = dist_dir / "index.html"
+    if not index_html.exists():
+        print("未找到 Web UI 构建产物，跳过前端挂载；"
+              "构建方式见 README『构建 Web UI』。")
+        return
+
+    assets_dir = dist_dir / "assets"
+    if assets_dir.exists():
+        app.mount(
+            "/assets",
+            StaticFiles(directory=str(assets_dir)),
+            name="ui-assets",
+        )
+
+    dist_root = dist_dir.resolve()
+
+    @app.get("/{path:path}", include_in_schema=False)
+    async def spa_fallback(path: str) -> "FileResponse":
+        if path:
+            # 目录穿越防护：候选文件必须解析后仍在 dist 内
+            candidate = (dist_dir / path).resolve()
+            if candidate.is_file() and candidate.is_relative_to(dist_root):
+                return FileResponse(str(candidate))
+            # 精确按首段匹配前端路由，未知路径 404
+            if path.split("/", 1)[0] not in _SPA_PREFIXES:
+                from fastapi import HTTPException
+
+                raise HTTPException(status_code=404, detail="Not Found")
+        # SPA fallback：前端路由统一返回 index.html
+        return FileResponse(str(index_html))
 
 
 def _chat_model_config(config: AppConfig) -> ChatModelConfig:

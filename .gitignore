@@ -11,3 +11,7 @@ reasonix.toml
 *.db
 .workspaces/
 
+# 官方 Web UI 前端构建产物与依赖（web_ui/ 保留源码）
+web_ui/**/node_modules/
+web_ui/frontend/dist/
+

@@ -47,6 +47,7 @@ def serve() -> None:
 
     print(
         f"{config.agent_name} 服务已启动。\n"
+        f"  Web UI:     http://{SERVE_HOST}:{SERVE_PORT}/\n"
         f"  API 文档(Swagger): http://{SERVE_HOST}:{SERVE_PORT}/docs\n"
         "按 Ctrl+C 停止。",
     )
