@@ -74,6 +74,8 @@ class AppConfig:
     agent_name: str
     system_prompt: str
     workspace: Path
+    agent_output_dir: Path
+    agent_data_dir: Path
     model_card: ModelCard
     max_tokens: int | None = field(default=None)
     thinking: bool = field(default=False)
@@ -182,6 +184,20 @@ def load_config() -> AppConfig:
         os.getenv("AGENT_WORKSPACE", str(Path.cwd())),
     ).expanduser().resolve()
 
+    # agent 工程产出物目录（虾虾子写入文件的位置）：非临时、明确可见，
+    # 默认 workspace/agent_outputs，可用 AGENT_OUTPUT_DIR 覆盖。
+    # 这是用户数据，任何测试/验证都不得删除。
+    agent_output_dir = Path(
+        os.getenv("AGENT_OUTPUT_DIR", str(workspace / "agent_outputs")),
+    ).expanduser().resolve()
+
+    # agent 数据目录（会话/凭证/团队记录 DB）：同样是用户数据，非临时，
+    # 默认 workspace/agent_data，可用 AGENT_DATA_DIR 覆盖；含明文 api_key，
+    # 已 gitignore，禁止入库。
+    agent_data_dir = Path(
+        os.getenv("AGENT_DATA_DIR", str(workspace / "agent_data")),
+    ).expanduser().resolve()
+
     model_name = (
         os.getenv("DEEPSEEK_MODEL", DEFAULT_MODEL_NAME).strip()
         or DEFAULT_MODEL_NAME
@@ -253,6 +269,8 @@ def load_config() -> AppConfig:
             or DEFAULT_SYSTEM_PROMPT
         ),
         workspace=workspace,
+        agent_output_dir=agent_output_dir,
+        agent_data_dir=agent_data_dir,
         model_card=model_card,
         max_tokens=max_tokens,
         thinking=thinking,

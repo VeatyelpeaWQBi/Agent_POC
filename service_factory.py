@@ -67,12 +67,14 @@ _SPA_PREFIXES = (
 def build_storage(config: AppConfig) -> AsyncSQLAlchemyStorage:
     """创建服务后端的 storage 实例（未进入生命周期）。
 
-    存储固定落在 ``config.workspace / agentscope_app.db``（与主程序同一
-    工作目录；预置与 FastAPI lifespan 用同一路径，两处一致）。
+    DB（会话/凭证/团队记录，含明文 api_key）固定落在
+    ``config.agent_data_dir / agentscope_app.db``——非临时目录，属于
+    用户数据，任何测试/验证都不得删除；预置与 FastAPI lifespan 用
+    同一路径，两处一致。
     """
-    config.workspace.mkdir(parents=True, exist_ok=True)
+    config.agent_data_dir.mkdir(parents=True, exist_ok=True)
     # as_posix() 保证 Windows 下也生成规范的 sqlite URL。
-    db_url = f"sqlite+aiosqlite:///{(config.workspace / 'agentscope_app.db').as_posix()}"
+    db_url = f"sqlite+aiosqlite:///{(config.agent_data_dir / 'agentscope_app.db').as_posix()}"
     return AsyncSQLAlchemyStorage(db_url, create_tables=True)
 
 
@@ -97,7 +99,7 @@ def build_app(
 
     storage = build_storage(config)
     workspace_manager = LocalWorkspaceManager(
-        str(config.workspace / ".workspaces"),
+        str(config.agent_output_dir),
     )
     app = create_app(
         storage=storage,
