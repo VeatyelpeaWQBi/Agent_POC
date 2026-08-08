@@ -14,7 +14,7 @@ import uvicorn
 
 from config import load_config
 from service_factory import build_app, build_storage, provision
-from subagent_templates import ALL_SUBAGENT_TEMPLATES
+from subagent_templates import build_templates
 
 # 服务监听地址与端口。
 SERVE_HOST = "127.0.0.1"
@@ -33,7 +33,7 @@ def serve() -> None:
         # 装配服务后端，并注入 team/subagent 工具箱（原生模板）。
         app, _ = build_app(
             config,
-            custom_subagent_templates=ALL_SUBAGENT_TEMPLATES,
+            custom_subagent_templates=build_templates(config),
         )
 
         async def _provision() -> None:

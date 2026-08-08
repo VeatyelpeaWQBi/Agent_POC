@@ -96,12 +96,13 @@ def build_app(
     from fastapi.middleware.cors import CORSMiddleware
 
     storage = build_storage(config)
+    workspace_manager = LocalWorkspaceManager(
+        str(config.workspace / ".workspaces"),
+    )
     app = create_app(
         storage=storage,
         message_bus=InMemoryMessageBus(),
-        workspace_manager=LocalWorkspaceManager(
-            str(config.workspace / ".workspaces"),
-        ),
+        workspace_manager=workspace_manager,
         custom_subagent_templates=custom_subagent_templates or [],
         # Web UI 前端与后端可能不同源（如 dev 端口 5173 / 填写的地址），
         # 官方 create_app 不内置 CORS，这里放开跨域供前端探测与调用。
@@ -115,6 +116,7 @@ def build_app(
         ],
     )
     _mount_health(app)
+    _mount_workspace_status(app, storage, workspace_manager)
     _mount_web_ui(app, config)
     return app, storage
 
@@ -134,6 +136,112 @@ def _mount_health(app: "FastAPI") -> None:
             "version": "2.0.6dev",
             "components": {"storage": "ok", "message_bus": "ok"},
         }
+
+
+def _mount_workspace_status(
+    app: "FastAPI",
+    storage: AsyncSQLAlchemyStorage,
+    workspace_manager,
+) -> None:
+    """补 GET /workspace/status——前端定期轮询的工作区状态端点。
+
+    官方前端（main 分支）会按 UI 节奏轮询 ``GET /workspace/status``，
+    返回会话工作目录与 git 状态；2.0.6dev 后端没有该端点，导致每次
+    轮询 404 刷日志。这里补齐前端期望的结构：非 git 仓库 / git 不可用
+    / 超时均返回 ``git: null``（前端隐藏徽标）。
+    """
+    import asyncio
+    import subprocess
+    from fastapi import Header, HTTPException
+
+    def _git_status(workdir: str) -> dict | None:
+        """同步解析 git 状态；非仓库/失败/超时返回 None。"""
+
+        def run(*args: str) -> subprocess.CompletedProcess:
+            return subprocess.run(
+                ["git", "-C", workdir, *args],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=5,
+            )
+
+        try:
+            probe = run("rev-parse", "--is-inside-work-tree")
+            if probe.returncode != 0 or probe.stdout.strip() != "true":
+                return None
+
+            branch = (
+                run("symbolic-ref", "--short", "-q", "HEAD").stdout.strip()
+                or None
+            )
+            head = run("rev-parse", "HEAD").stdout.strip() or None
+
+            ahead = behind = None
+            r = run("rev-list", "--left-right", "--count", "@{upstream}...HEAD")
+            if r.returncode == 0:
+                parts = r.stdout.split()
+                if len(parts) == 2:
+                    behind, ahead = int(parts[0]), int(parts[1])
+
+            insertions = deletions = 0
+            for cached in ([], ["--cached"]):
+                r = run("diff", "--numstat", *cached)
+                for line in r.stdout.splitlines():
+                    parts = line.split("\t")
+                    if len(parts) >= 2 and parts[0].isdigit() and parts[1].isdigit():
+                        insertions += int(parts[0])
+                        deletions += int(parts[1])
+
+            staged = unstaged = untracked = conflicted = 0
+            r = run("status", "--porcelain")
+            for line in r.stdout.splitlines():
+                if len(line) < 3:
+                    continue
+                x, y = line[0], line[1]
+                if x in "U" or y in "U" or x == y in "AD":
+                    conflicted += 1
+                elif x not in " ?":
+                    staged += 1
+                if y not in " ?":
+                    unstaged += 1
+                if x == "?" or y == "?":
+                    untracked += 1
+
+            return {
+                "branch": branch,
+                "head": head,
+                "ahead": ahead,
+                "behind": behind,
+                "insertions": insertions,
+                "deletions": deletions,
+                "staged": staged,
+                "unstaged": unstaged,
+                "untracked": untracked,
+                "conflicted": conflicted,
+            }
+        except Exception:
+            return None
+
+    @app.get("/workspace/status", include_in_schema=False)
+    async def workspace_status(
+        agent_id: str,
+        session_id: str,
+        x_user_id: str = Header(...),
+    ) -> dict:
+        session = await storage.get_session(x_user_id, agent_id, session_id)
+        if session is None:
+            raise HTTPException(status_code=404, detail="Session not found")
+        workspace = await workspace_manager.get_workspace(
+            x_user_id,
+            agent_id,
+            session_id,
+            session.config.workspace_id,
+        )
+        workdir = workspace.workdir
+        git = await asyncio.to_thread(_git_status, workdir)
+        return {"workdir": workdir, "cwd": workdir, "git": git}
 
 
 def _mount_web_ui(app: "FastAPI", config: AppConfig) -> None:

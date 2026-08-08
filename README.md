@@ -174,6 +174,8 @@ POST http://127.0.0.1:8000/chat/
 worker 为**只读调查员**（`subagent_templates.py`）：allow `Read/Glob/Grep`，
 deny `Bash/PowerShell/Write/Edit`。服务形态没有人工确认界面，deny 而非
 ask——worker 想写文件/执行命令会被直接拒绝，不会卡住等待确认。
+worker 的 ReAct 迭代上限与主 agent 对齐（读 `AGENT_MAX_ITERS`，默认 60），
+避免长任务（如多轮创作）先于主 agent 触顶中断。
 
 示例任务（虾虾子会派生多个 worker 并行分析后整合汇报）：
 

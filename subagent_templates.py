@@ -12,6 +12,7 @@ worker 模板权限设计：**真正只读**。服务形态没有人工确认界
 
 from __future__ import annotations
 
+from agentscope.agent import ReActConfig
 from agentscope.app import SubAgentTemplate
 from agentscope.permission import (
     PermissionBehavior,
@@ -19,6 +20,8 @@ from agentscope.permission import (
     PermissionMode,
     PermissionRule,
 )
+
+from config import AppConfig
 
 
 def _rule(tool_name: str, behavior: PermissionBehavior) -> PermissionRule:
@@ -48,26 +51,36 @@ _WORKER_PERMISSION = PermissionContext(
     },
 )
 
-# 原生 worker 模板：供 AgentCreate 按 subagent_type="worker" 选择。
-WORKER_TEMPLATE = SubAgentTemplate(
-    type="worker",
-    description=(
-        "A read-only researcher subagent: explores files and reports a "
-        "concise summary. Cannot modify files or run commands."
-    ),
-    system_prompt_template=(
-        "You are {member_name}, a worker in team '{team_name}' led by "
-        "{leader_name}.\n\nTeam purpose: {team_description}\n\n"
-        "Your role: {member_description}\n\n"
-        "You are read-only. Complete the task you are given, then use "
-        "TeamSay to report a concise summary to the leader."
-    ),
-    # 模板自带只读权限并覆盖 leader 模式：worker 永远不能写文件/执行命令。
-    permission_context=_WORKER_PERMISSION,
-    override_leader_mode=True,
-    extend_leader_permission_rules=False,
-    extend_leader_working_directories=True,
-)
+def build_templates(config: AppConfig) -> list[SubAgentTemplate]:
+    """构造全部子代理模板（装配时传入 create_app）。
 
-# 所有可用的子代理模板，装配时直接传入 create_app。
-ALL_SUBAGENT_TEMPLATES = [WORKER_TEMPLATE]
+    worker 的 ``react_config.max_iters`` 与主 agent 对齐（读
+    ``AGENT_MAX_ITERS``，默认 60）——若不配置，SubAgentTemplate 走
+    AgentScope 默认 20，长任务（如多轮小说创作）会先于主 agent 触顶
+    中断（日志：``exceeds the max iteration numbers 20``）。
+    """
+    return [
+        SubAgentTemplate(
+            type="worker",
+            description=(
+                "A read-only researcher subagent: explores files and "
+                "reports a concise summary. Cannot modify files or run "
+                "commands."
+            ),
+            system_prompt_template=(
+                "You are {member_name}, a worker in team '{team_name}' led "
+                "by {leader_name}.\n\nTeam purpose: {team_description}\n\n"
+                "Your role: {member_description}\n\n"
+                "You are read-only. Complete the task you are given, then "
+                "use TeamSay to report a concise summary to the leader."
+            ),
+            # 模板自带只读权限并覆盖 leader 模式：worker 永远不能写文件/
+            # 执行命令。
+            permission_context=_WORKER_PERMISSION,
+            override_leader_mode=True,
+            extend_leader_permission_rules=False,
+            extend_leader_working_directories=True,
+            # 与主 agent 相同的 ReAct 迭代上限，避免长任务先触顶中断。
+            react_config=ReActConfig(max_iters=config.max_iters),
+        )
+    ]
