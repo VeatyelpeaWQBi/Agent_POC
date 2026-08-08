@@ -10,7 +10,8 @@ reasonix.toml
 # agent 数据（含明文 api_key，禁止入库）与运行时产物
 *.db
 agent_data/
-agent_outputs/
+agent_workspace/
+install-skill.bat
 
 # 官方 Web UI 前端构建产物与依赖（web_ui/ 保留源码）
 web_ui/**/node_modules/

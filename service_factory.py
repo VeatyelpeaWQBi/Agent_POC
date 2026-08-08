@@ -99,7 +99,7 @@ def build_app(
 
     storage = build_storage(config)
     workspace_manager = LocalWorkspaceManager(
-        str(config.agent_output_dir),
+        str(config.agent_workspace),
     )
     app = create_app(
         storage=storage,

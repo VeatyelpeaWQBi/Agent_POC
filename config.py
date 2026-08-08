@@ -74,7 +74,7 @@ class AppConfig:
     agent_name: str
     system_prompt: str
     workspace: Path
-    agent_output_dir: Path
+    agent_workspace: Path
     agent_data_dir: Path
     model_card: ModelCard
     max_tokens: int | None = field(default=None)
@@ -184,11 +184,11 @@ def load_config() -> AppConfig:
         os.getenv("AGENT_WORKSPACE", str(Path.cwd())),
     ).expanduser().resolve()
 
-    # agent 工程产出物目录（虾虾子写入文件的位置）：非临时、明确可见，
-    # 默认 workspace/agent_outputs，可用 AGENT_OUTPUT_DIR 覆盖。
-    # 这是用户数据，任何测试/验证都不得删除。
-    agent_output_dir = Path(
-        os.getenv("AGENT_OUTPUT_DIR", str(workspace / "agent_outputs")),
+    # agent 工作区根目录（各 agent 的 workspace 都在其下，含 skills/ 等）：
+    # 非临时、明确可见，默认 workspace/agent_workspace，可用
+    # AGENT_WORKSPACE_DIR 覆盖。这是用户数据，任何测试/验证都不得删除。
+    agent_workspace = Path(
+        os.getenv("AGENT_WORKSPACE_DIR", str(workspace / "agent_workspace")),
     ).expanduser().resolve()
 
     # agent 数据目录（会话/凭证/团队记录 DB）：同样是用户数据，非临时，
@@ -269,7 +269,7 @@ def load_config() -> AppConfig:
             or DEFAULT_SYSTEM_PROMPT
         ),
         workspace=workspace,
-        agent_output_dir=agent_output_dir,
+        agent_workspace=agent_workspace,
         agent_data_dir=agent_data_dir,
         model_card=model_card,
         max_tokens=max_tokens,

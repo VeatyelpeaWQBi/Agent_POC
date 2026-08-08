@@ -33,7 +33,7 @@ Agent_POC/
 ├─ subagent_templates.py # 原生子代理模板（只读 worker）
 ├─ web_ui/             # 官方 Web UI 前端工程（React+Vite，构建后挂载到 /）
 ├─ model_cards/         # 模型卡片注册表（YAML 声明模型能力与上限）
-├─ agent_outputs/      # 虾虾子的工程产出物（非临时目录，勿删，可用 AGENT_OUTPUT_DIR 改）
+├─ agent_workspace/   # 各 agent 的工作区根（含 skills/ 与产出物；勿删，可用 AGENT_WORKSPACE_DIR 改）
 ├─ agent_data/         # 会话/凭证/团队记录 DB（含 api_key，勿删勿入库）
 ├─ .env                 # 本地真实配置，不会提交到 Git
 ├─ .env.example         # 可以公开的配置模板
@@ -193,8 +193,9 @@ worker 的派生/汇报由 AgentScope 原生机制调度：父 agent 的 `AgentC
 - worker 只读（见上节），无法写文件或执行命令。
 - 服务数据落在 `config.agent_data_dir/agentscope_app.db`（`agent_data/`，
   SQLite，含明文 api_key），已被 `.gitignore` 忽略，**禁止入库、禁止删除**；
-  虾虾子的工程产出物（写出的文件）落在 `agent_outputs/`（非临时目录，
-  **禁止删除**，可用 `AGENT_OUTPUT_DIR` / `AGENT_DATA_DIR` 调整）。
+  虾虾子的工程产出物（写出的文件）落在 `agent_workspace/<agent_id>/`（非临时目录，
+  **禁止删除**，可用 `AGENT_WORKSPACE_DIR` / `AGENT_DATA_DIR` 调整）；
+  用户自选 skill 在 `agent_workspace/<agent_id>/skills/`。
 - 凭证（DeepSeek api_key）通过 `service_factory.provision` 写入存储，
   代码内不打印密钥。
 - 虾虾子（leader）调用写工具（`PowerShell / Write / Edit`，Windows
