@@ -1,44 +1,43 @@
-# AgentScope 2.0 工具调用聊天 Agent
+# AgentScope 2.0 AI Agent 服务（虾虾子）
 
-这是一个适合 Python 新手阅读的命令行 Agent 示例。它使用 DeepSeek 模型，
-支持多轮聊天、连续工具调用，以及敏感工具人工审核。
+这是一个基于 AgentScope 2.0 的 AI Agent 程序：**程序即服务**——启动后提供
+agent service 后端（官方 `create_app`）与 Swagger 交互界面，并使用 DeepSeek
+模型。服务端自带原生 team/subagent 能力：虾虾子可以派生只读 worker 并行
+分析任务。
 
 ## 工作流程
 
 ```text
-主人输入问题
+python main.py
     ↓
-模型决定直接回答，或者调用工具
+预置：DeepSeek 凭证 + 虾虾子 agent + 默认会话（幂等）
     ↓
-多步任务：模型先调用 TaskCreate 创建任务列表（自动执行，无需确认）
+uvicorn 启动 agent service（http://127.0.0.1:8000）
     ↓
-只读工具（Read / Glob / Grep）────────→ 自动执行
-敏感工具（PowerShell / Write / Edit）─→ 终端显示参数，等待 y/n 审核
+主人通过 Swagger(/docs) 或 REST(POST /chat/) 发消息
     ↓
-工具结果交还给模型，模型用 TaskUpdate 更新任务进度并继续
+虾虾子按 ReAct 循环调用工具：
+  workspace 工具（Read / Glob / Grep / Bash / Write / Edit）
+  team/subagent 工具（TeamCreate / AgentCreate / TeamSay / TeamDelete）
     ↓
-模型可以继续调用工具，或生成最终回答
+模型直接回答，或派生 worker 并行干活后整合汇报
 ```
-
-工具循环由 AgentScope 2.0 内部的 ReAct 机制负责。`approval.py` 负责接收
-“需要主人确认”的事件，并在确认后让同一轮回复继续运行。
 
 ## 项目结构
 
 ```text
 Agent_POC/
-├─ main.py            # 程序入口和聊天循环
-├─ config.py          # 读取 .env、加载模型卡片并校验配置
-├─ agent_factory.py   # 创建模型、工具箱和权限规则
-├─ approval.py        # 敏感工具审核、暂停/恢复循环、任务 nag 提醒
-├─ task_broadcaster.py # 任务状态广播：渲染器 + 渠道抽象 + 终端面板
-├─ model_cards/       # 模型卡片注册表（YAML 声明模型能力与上限）
-├─ .env               # 本地真实配置，不会提交到 Git
-├─ .env.example       # 可以公开的配置模板
-└─ requirements.txt   # Python 依赖
+├─ main.py              # 程序入口：启动 agent service（唯一入口）
+├─ config.py            # 读取 .env、加载模型卡片并校验配置
+├─ service_factory.py   # create_app 装配 + 虾虾子/凭证/会话预置
+├─ subagent_templates.py # 原生子代理模板（只读 worker）
+├─ model_cards/         # 模型卡片注册表（YAML 声明模型能力与上限）
+├─ .env                 # 本地真实配置，不会提交到 Git
+├─ .env.example         # 可以公开的配置模板
+└─ requirements.txt     # Python 依赖
 ```
 
-建议按 `main.py → config.py → agent_factory.py → approval.py` 的顺序阅读。
+建议按 `main.py → config.py → service_factory.py → subagent_templates.py` 的顺序阅读。
 
 ## 1. 安装依赖
 
@@ -46,12 +45,6 @@ Agent_POC/
 
 ```powershell
 python -m pip install -r requirements.txt
-```
-
-如果 Windows 中使用 Python Launcher：
-
-```powershell
-py -m pip install -r requirements.txt
 ```
 
 ## 2. 配置 DeepSeek
@@ -77,8 +70,8 @@ DEEPSEEK_MODEL=deepseek-v4-flash
 每个可用模型在 `model_cards/` 目录下有一张 YAML 模型卡片，声明它的
 能力、上限与参数覆盖（格式见
 [AgentScope 文档](https://docs.agentscope.io/versions/2.0.6dev/zh/building-blocks/model/overview)）。
-程序启动时通过 `DeepSeekChatModel.list_models(custom_yaml_dir=...)` 加载这些
-卡片，并据此校验配置：
+程序通过 `DeepSeekChatModel.list_models(custom_yaml_dir=...)` 加载这些卡片，
+并据此校验配置：
 
 | 卡片字段 | 作用 |
 | --- | --- |
@@ -113,103 +106,69 @@ AGENT_SYSTEM_PROMPT=你的名字是虾虾子，你始终称呼用户为主人…
 python main.py
 ```
 
-或者：
+启动后：
 
-```powershell
-py main.py
-```
+- API 文档（Swagger UI）：http://127.0.0.1:8000/docs
+- 启动时自动预置 DeepSeek 凭证 + 虾虾子 agent + 默认会话（幂等），
+  无需手工建 agent——服务端口的虾虾子与配置完全来自同一份 `config.py`。
 
-输入 `/exit`、`/quit` 或 `退出` 可以结束聊天。
+## 4. 与虾虾子对话（REST）
 
-## 4. 测试工具调用
-
-先测试只读工具：
+用 `POST /chat/` 发消息（`x-user-id: local-user`）：
 
 ```text
-请查看当前目录有哪些 Python 文件，并总结它们的用途。
+POST http://127.0.0.1:8000/chat/
+{
+  "agent_id": "xiashazi",
+  "session_id": "session-xiashazi",
+  "input": [{"name": "user", "role": "user",
+             "content": [{"type": "text", "text": "你好，虾虾子"}]}]
+}
 ```
 
-`Glob`、`Read` 或 `Grep` 会自动执行，不弹出确认。
+返回 `{"status": "started", "session_id": "..."}`（异步执行）。查询结果：
 
-再测试敏感工具：
+- `GET /sessions/session-xiashazi/status?agent_id=xiashazi`：`running` / `idle`
+- `GET /sessions/session-xiashazi/messages?agent_id=xiashazi`：会话消息
+
+也可以直接打开 `/docs`，在 Swagger 里点 `POST /chat/` 试玩。
+
+## 5. team/subagent 能力
+
+虾虾子自带原生团队工具（AgentScope 官方 `create_app` 按会话团队角色自动
+装配）：
+
+| 工具 | 作用 |
+| --- | --- |
+| `TeamCreate` | 创建团队（目标、子代理类型） |
+| `AgentCreate` | 按 `subagent_type` 派生 worker 成员 |
+| `TeamSay` | 成员向 leader 汇报 |
+| `TeamDelete` | 解散团队（`created` 成员连 agent+session 级联删除） |
+
+worker 为**只读调查员**（`subagent_templates.py`）：allow `Read/Glob/Grep`，
+deny `Bash/PowerShell/Write/Edit`。服务形态没有人工确认界面，deny 而非
+ask——worker 想写文件/执行命令会被直接拒绝，不会卡住等待确认。
+
+示例任务（虾虾子会派生多个 worker 并行分析后整合汇报）：
 
 ```text
-请创建 hello.txt，内容是“你好，主人”。
+用原生团队工具分析 model_cards/ 目录下有哪些模型卡片，并总结它们的用途。
 ```
 
-执行 `Write` 前会出现类似提示：
+worker 的派生/汇报由 AgentScope 原生机制调度：父 agent 的 `AgentCreate`
+只是"下订单"，worker 由消息总线触发、在独立会话中执行，`TeamSay` 回传结果。
 
-```text
-⚠ 检测到需要人工审核的工具调用
-工具：Write
-参数：...
-是否允许执行？[y=允许 / n=拒绝]：
-```
+## 6. 安全
 
-- 输入 `y`：只批准当前这次调用；
-- 输入 `n`：拒绝调用，工具不会执行；
-- 拒绝后，模型会收到拒绝结果，并可以解释影响或提出替代方案。
-
-## 5. 安全策略在哪里修改
-
-权限规则位于 `agent_factory.py`：
-
-```python
-READ_ONLY_TOOLS = ("Read", "Glob", "Grep")
-SENSITIVE_TOOLS = ("PowerShell", "Write", "Edit")
-```
-
-示例故意将所有命令行调用都视为敏感操作，因为即使看似普通的命令也可能
-包含删除文件、安装软件或访问网络等行为。不要为了省去确认而把
-`SENSITIVE_TOOLS` 加入自动放行列表。
-
-AgentScope 的 `Write` 和 `Edit` 还内置了敏感文件保护，例如 `.env`、`.git`
-和 SSH 配置等路径会受到额外检查。
-
-## 6. 待办管理（任务追踪）
-
-使用 AgentScope 2.0 内置的任务四件套（已在 `agent_factory.py` 注册）：
-
-- **`TaskCreate`**：创建任务（`subject` + `description`），状态默认 `pending`。
-- **`TaskList`** / **`TaskGet`**：查看任务列表 / 单个任务。
-- **`TaskUpdate`**：更新任务状态（`pending` → `in_progress` → `completed`，
-  或 `deleted`），也可设置 `blocks` / `blocked_by` 依赖、`owner` 等。
-
-这些工具只更新内存中的任务列表（`AgentState.tasks_context`），不触碰文件
-系统，因此 `check_permissions` 恒为 ALLOW，不弹人工确认、无需额外权限规则。
-
-**Nag reminder**（`approval.py`）：模仿 [AI Agent Learning L03（待办管理）](
-https://www.kangxin.cfd/ai-agent-learning/zh/L03/) 的催促机制——模型在单轮
-回复里连续 3 轮推理都没有调用任何任务工具、且仍有未完成任务时，程序会向
-上下文注入 `<reminder>Update your todos.</reminder>` 催促它维护进度。
-AgentScope 自身的运行时状态注入会在模型“从未用过任务工具”时提示一次
-`Use TaskList to view them`，两者互补：一个是提醒它开始用，一个是盯住它
-别忘更新。
-
-任务列表保存在内存中，会话结束即清空。
-
-**实时任务面板**（`task_broadcaster.py`）：模型每调用一次任务工具
-（TaskCreate / TaskUpdate 等）执行完成后，`approval.py` 会把当前任务状态
-渲染成快照广播出去。当前订阅了终端渠道，面板在**固定位置原地刷新**
-（ANSI 转义，Windows 10+ 终端原生支持），不会重复堆积：
-
-```text
-── 任务面板 ──────────────────────
-[ ] #1: 整理虾虾子的待办清单
-[ ] #2: 给主人泡一杯茶
-[ ] #3: 验证任务状态流转
-
-(0/3 completed)
-──────────────────────────────────
-```
-
-任务完成后（或出现人工审核卡片、模型回复等其他输出时），面板会先
-"定稿"（`finalize`），其他输出接在面板下方；下一轮任务更新再开新面板。
-输出被重定向到文件/管道时自动退化为逐块打印，不写 ANSI 序列。
-
-**扩展渠道**：展示层与状态追踪解耦——`TaskBroadcaster` 只管把快照推给
-所有 `TaskChannel` 订阅者。以后要接 Web UI、远程消息通知，只需新增一个
-`TaskChannel` 子类并在 `main.py` 里 `subscribe`，无需改动广播与触发逻辑。
+- worker 只读（见上节），无法写文件或执行命令。
+- 服务数据落在 `config.workspace/agentscope_app.db`（SQLite，含明文
+  api_key），已被 `.gitignore` 忽略，**禁止入库**。
+- 凭证（DeepSeek api_key）通过 `service_factory.provision` 写入存储，
+  代码内不打印密钥。
+- 虾虾子（leader）调用写工具（`Bash / PowerShell / Write / Edit`）时会
+  触发确认事件——服务形态的**异步确认机制**：主人通过 `POST /chat/`
+  把 `UserConfirmResult` 作为 `input` 回传即可完成确认（官方设计，无
+  人工界面时不会自动放行）。worker 则直接 deny，绝不等确认。
 
 ## 配置项
 
@@ -223,8 +182,8 @@ AgentScope 自身的运行时状态注入会在模型“从未用过任务工具
 | `AGENT_MAX_ITERS` | 否 | `60` | 一轮回复内 ReAct 循环最大迭代数；大型多步骤任务建议 ≥ 60 |
 | `AGENT_NAME` | 否 | `虾虾子` | Agent 显示名称 |
 | `AGENT_SYSTEM_PROMPT` | 否 | `config.py` 中的默认人格 | 身份和行为设定 |
-| `AGENT_TIMEZONE` | 否 | `Asia/Shanghai` | 注入给模型的时区（IANA 格式），运行时状态每 1 分钟刷新 |
+| `AGENT_TIMEZONE` | 否 | `Asia/Shanghai` | 注入给模型的时区（IANA 格式） |
 | `AGENT_WORKSPACE` | 否 | 启动程序时的当前目录 | 工具默认工作目录 |
 
-本示例会在程序运行期间保留多轮对话上下文；退出后不会持久化聊天记录。
-# Agent_POC
+会话历史保存在 `agentscope_app.db` 中，重启服务后仍在；运行中的状态由
+`InMemoryMessageBus` 承载，不跨进程。

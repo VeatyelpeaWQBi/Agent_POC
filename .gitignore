@@ -7,3 +7,7 @@ __pycache__/
 .reasonix/
 reasonix.toml
 
+# agentscope app 服务运行时产物（SQLite 含明文 api_key，禁止入库）
+*.db
+.workspaces/
+

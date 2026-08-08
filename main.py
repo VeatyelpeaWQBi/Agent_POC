@@ -1,83 +1,57 @@
-"""AgentScope 2.0 命令行聊天 Agent 的程序入口。"""
+"""AgentScope 2.0 AI Agent 程序入口（虾虾子）。
+
+程序即服务：启动 agent service 后端（官方 create_app），通过 Swagger UI
+（/docs）交互，自带原生 team/subagent 能力（只读 worker 调查员）。
+agent 配置（人格 / 模型 / 凭证）来自 config.py。
+"""
 
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+import sys
 
-from approval import run_agent_turn
-from agent_factory import build_agent
+import uvicorn
+
 from config import load_config
-from task_broadcaster import TaskBroadcaster, TerminalTaskChannel
+from service_factory import build_app, build_storage, provision
+from subagent_templates import ALL_SUBAGENT_TEMPLATES
+
+# 服务监听地址与端口。
+SERVE_HOST = "127.0.0.1"
+SERVE_PORT = 8000
 
 
-EXIT_COMMANDS = {"/exit", "/quit", "exit", "quit", "退出"}
+def serve() -> None:
+    """启动 agent service 后端（uvicorn）。
 
+    启动前先预置凭证 / 虾虾子 agent / 默认会话（幂等），保证服务端口
+    的 agent 可直接对话；预置使用独立的临时 storage，app 绑定的 storage
+    生命周期完全交给 FastAPI lifespan 管理（官方契约）。
+    """
+    try:
+        config = load_config()
+        # 装配服务后端，并注入 team/subagent 工具箱（原生模板）。
+        app, _ = build_app(
+            config,
+            custom_subagent_templates=ALL_SUBAGENT_TEMPLATES,
+        )
 
-def extract_text(message: Any) -> str:
-    """从 AgentScope 消息的文本块中提取最终回答。"""
+        async def _provision() -> None:
+            async with build_storage(config) as tmp_storage:
+                await provision(config, tmp_storage)
 
-    text_parts: list[str] = []
-    for block in message.content:
-        if isinstance(block, str):
-            text_parts.append(block)
-        elif isinstance(block, dict) and block.get("type") == "text":
-            text_parts.append(str(block.get("text", "")))
-        elif getattr(block, "type", None) == "text":
-            text_parts.append(str(getattr(block, "text", "")))
-    return "".join(text_parts).strip()
-
-
-async def chat_loop() -> None:
-    """持续接收终端输入，并保留当前进程内的多轮对话上下文。"""
-
-    config = load_config()
-    agent = build_agent(config)
-
-    # 任务状态广播：模型每次调用任务工具后，把渲染好的任务面板推送给
-    # 所有订阅渠道。当前订阅终端；以后可再 subscribe 一个 Web UI 或
-    # 远程通知渠道，无需改动广播与触发逻辑。
-    task_broadcaster = TaskBroadcaster()
-    task_broadcaster.subscribe(TerminalTaskChannel())
+        asyncio.run(_provision())
+    except Exception as exc:
+        print(f"启动失败：{exc}")
+        sys.exit(1)
 
     print(
-        f"{agent.name} 已启动。输入 /exit、/quit 或“退出”结束对话。\n"
-        f"工作目录：{config.workspace}\n"
-        f"模型：{config.model_card.label}（{config.model_name}，"
-        f"状态 {config.model_card.status}，上下文 {config.model_card.context_size} tokens）\n"
-        "安全策略：只读工具自动执行；命令、写入和编辑操作需要人工确认。",
+        f"{config.agent_name} 服务已启动。\n"
+        f"  API 文档(Swagger): http://{SERVE_HOST}:{SERVE_PORT}/docs\n"
+        "按 Ctrl+C 停止。",
     )
-
-    while True:
-        try:
-            user_input = (await asyncio.to_thread(input, "\n你：")).strip()
-        except (EOFError, KeyboardInterrupt):
-            print("\n对话已结束。")
-            return
-
-        if not user_input:
-            continue
-        if user_input.lower() in EXIT_COMMANDS:
-            print("对话已结束。")
-            return
-
-        try:
-            reply = await run_agent_turn(
-                agent,
-                user_input,
-                task_broadcaster=task_broadcaster,
-            )
-            answer = extract_text(reply)
-            print(f"\n{agent.name}：{answer or '[模型没有返回文本内容]'}")
-        except KeyboardInterrupt:
-            print("\n本轮请求已中断。")
-        except Exception as exc:
-            # CLI 边界：单次 API 或工具错误不应终止整个聊天程序。
-            print(f"\n请求失败：{exc}")
+    uvicorn.run(app, host=SERVE_HOST, port=SERVE_PORT)
 
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(chat_loop())
-    except RuntimeError as exc:
-        print(f"启动失败：{exc}")
+    serve()

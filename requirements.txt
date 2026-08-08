@@ -1,3 +1,9 @@
 agentscope>=2.0.5,<2.1.0
 python-dotenv>=1.0,<2.0
+# agentscope.app 原生服务层依赖（main.py 服务入口需要）
+apscheduler>=3.10,<4
+fastapi>=0.110,<1
+sqlalchemy[asyncio]>=2.0
+aiosqlite>=0.20
+uvicorn>=0.29,<1
 
